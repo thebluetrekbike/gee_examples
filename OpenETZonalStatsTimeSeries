@@ -1,0 +1,57 @@
+var polygons = ee.FeatureCollection("projects/ee-kmoyers/assets/i15_Crop_Mapping_2020_Santa_Clara_fewer_fields"); 
+Map.addLayer(polygons);
+
+// Define the region of interest (Santa Clara Valley)
+var roi = ee.Geometry.Rectangle([-122.2192764,36.9134448,-121.3211341,37.4543174]);
+Map.addLayer(roi);
+
+// Define the date range
+var startDate = ee.Date('2020-01-01'); 
+var endDate = ee.Date('2020-12-31');
+
+// Define the collection names and their corresponding export names as an object
+var collectionNames = {
+  "OpenET/ENSEMBLE/CONUS/GRIDMET/MONTHLY/v2_0": "Ensemble",
+  "OpenET/DISALEXI/CONUS/GRIDMET/MONTHLY/v2_0": "Disalexi",
+  "OpenET/EEMETRIC/CONUS/GRIDMET/MONTHLY/v2_0": "EEMETRIC",
+  "OpenET/GEESEBAL/CONUS/GRIDMET/MONTHLY/v2_0": "GEESEBAL",
+  "OpenET/PTJPL/CONUS/GRIDMET/MONTHLY/v2_0": "PTJPL",
+  "OpenET/SIMS/CONUS/GRIDMET/MONTHLY/v2_0": "SIMS",
+  "OpenET/SSEBOP/CONUS/GRIDMET/MONTHLY/v2_0": "SSEBOP"
+};
+
+// Loop through the collection names
+for (var collectionName in collectionNames) {
+  if (collectionNames.hasOwnProperty(collectionName)) {
+    var exportName = collectionNames[collectionName];
+    
+    // Load the OpenET image collection
+    var collection = ee.ImageCollection(collectionName)
+      .filterBounds(roi)
+      .filterDate(startDate, endDate)
+      .sort('system:time_start'); 
+    
+    // Calculate zonal statistics for each feature in the polygons feature collection
+    var zonalStats = collection.map(function(image) {
+      var stats = image.reduceRegions({
+        collection: polygons,
+        reducer: ee.Reducer.mean(),
+        scale: 10
+      });
+
+      return stats.map(function(feature) {
+        // Add the date and feature ID as properties to each feature
+        var date = image.date().format('YYYY-MM-dd');
+        return feature.set('date', date)
+                     .set('featureID', feature.get('UniqueID'));
+      });
+    }).flatten();
+
+    // Export the zonal statistics as a CSV file
+    Export.table.toDrive({
+      collection: zonalStats,
+      description: '2020_OpenET_zonal_statistics_' + exportName,
+      fileFormat: 'CSV'
+    });
+  }
+}
