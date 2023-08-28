@@ -1,0 +1,55 @@
+// Define the region of interest (e.g., a bounding box) Santa Clara Valley
+// var roi = ee.Geometry.Rectangle([-121.7678586,37.2297905,-121.4729360,36.9194569]);
+
+// Load Sentinel-2 image collection
+var collection = ee.ImageCollection("COPERNICUS/S2_CLOUD_PROBABILITY");
+
+// Import the polygon feature from a shapefile as an asset
+var polygon = ee.FeatureCollection("projects/ee-kmoyers/assets/sc_valley_floor");
+
+Map.addLayer(polygon, {}, "Polygon");
+
+// Filter the collection based on the polygon and date range
+var filteredCollection = collection.filterBounds(polygon)
+  .filterDate('2018-01-01', '2021-12-31');
+
+// Function to calculate cloud probability within the polygon
+function calculateCloudProb(image) {
+  // Get the cloud probability band
+  var cloudProb = image.select('probability');
+  
+  // Calculate the mean cloud probability within the polygon
+  var meanCloudProb = cloudProb.reduceRegion({
+    reducer: ee.Reducer.mean(),
+    geometry: polygon.geometry(),
+    scale: 10,
+    maxPixels: 1e8 
+  }).get('probability');
+  
+  return image.set('mean_cloud_prob', meanCloudProb);
+}
+
+// Apply the cloud probability calculation function to each image in the collection
+var collectionWithCloudProb = filteredCollection.map(calculateCloudProb);
+
+// Filter images based on high cloud probability (adjust threshold as needed)
+var cloudyDates = collectionWithCloudProb.filter(ee.Filter.gte('mean_cloud_prob', 50));
+
+// Get the unique dates with cloud cover above the threshold
+var uniqueDates = cloudyDates.distinct('system:time_start')
+  .aggregate_array('system:time_start')
+  .map(function(time) {
+    return ee.Date(time).format("YYYY-MM-dd");
+  });
+
+// Print the list of unique dates
+print('Unique Cloudy Dates:', uniqueDates);
+
+// Export the list of unique dates as a CSV file
+Export.table.toDrive({
+  collection: ee.FeatureCollection(ee.List(uniqueDates).map(function(date){
+    return ee.Feature(null, {date: date});
+  })),
+  description: 'unique_dates_cloudy',
+  fileFormat: 'CSV'
+});
